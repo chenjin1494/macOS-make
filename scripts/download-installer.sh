@@ -43,16 +43,42 @@ app_version() {
     printf '%s' "$v"
 }
 
-# 在给定目录里按版本前缀找 Install macOS *.app
+# 版本号 -> 安装器的营销名称（"Install macOS Catalina.app" 里的 Catalina）
+marketing_name() {
+    case "$1" in
+        10.13*) printf 'High Sierra' ;;
+        10.14*) printf 'Mojave' ;;
+        10.15*) printf 'Catalina' ;;
+        11.*)   printf 'Big Sur' ;;
+        12.*)   printf 'Monterey' ;;
+        13.*)   printf 'Ventura' ;;
+        14.*)   printf 'Sonoma' ;;
+        15.*)   printf 'Sequoia' ;;
+        26.*)   printf 'Tahoe' ;;
+        *)      printf '' ;;
+    esac
+}
+
+# 在给定目录里找 Install macOS *.app
+#   $3 是营销名称提示：softwareupdate 下载的安装器 Info.plist 里的
+#   CFBundleShortVersionString 可能被写成宿主系统版本（例如 Catalina 安装器
+#   显示 15.7.03），所以名称匹配比版本号匹配更可靠。
 find_app() {
-    local dir="$1" want="$2" app v
+    local dir="$1" want="$2" hint="${3:-}" app v base
     for app in "$dir"/Install\ macOS*.app; do
         [ -d "$app" ] || continue
-        v="$(app_version "$app")"
-        if [ -z "$v" ] || [ "$v" = "$want" ] || [[ "$v" == "$want".* ]] \
-            || [ "${v%.*}" = "${want%.*}" ] || [[ "$want" == "$v".* ]]; then
+        base="$(basename "$app")"
+        if [ -n "$hint" ] && [[ "$base" == *"$hint"* ]]; then
             printf '%s\n' "$app"
             return 0
+        fi
+        v="$(app_version "$app")"
+        if [ -n "$v" ]; then
+            if [ "$v" = "$want" ] || [[ "$v" == "$want".* ]] \
+                || [ "${v%.*}" = "${want%.*}" ] || [[ "$want" == "$v".* ]]; then
+                printf '%s\n' "$app"
+                return 0
+            fi
         fi
     done
     return 1
@@ -75,11 +101,24 @@ finish() {
 # -----------------------------------------------------------------------------
 try_softwareupdate() {
     log "尝试 softwareupdate 下载 macOS $VERSION（Apple 官方渠道）"
-    local app attempt rc
+    local app attempt rc hint before
+    hint="$(marketing_name "$VERSION")"
+    before="$WORK_DIR/apps-before.txt"
+    ls -1d /Applications/Install\ macOS*.app 2>/dev/null > "$before" || true
+
     for attempt in 1 2 3; do
         log "softwareupdate 第 $attempt/3 次尝试"
         if sudo softwareupdate --fetch-full-installer --full-installer-version "$VERSION"; then
-            if app="$(find_app /Applications "$VERSION")"; then
+            # softwareupdate 下载的安装器不一定带正确的版本号，先认「新出现」的 app
+            for app in /Applications/Install\ macOS*.app; do
+                [ -d "$app" ] || continue
+                if ! grep -qxF "$app" "$before"; then
+                    finish "$app"
+                    return 0
+                fi
+            done
+            # 再按营销名称 / 版本号匹配
+            if app="$(find_app /Applications "$VERSION" "$hint")"; then
                 finish "$app"
                 return 0
             fi
