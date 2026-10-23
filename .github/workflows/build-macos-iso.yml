@@ -10,7 +10,11 @@ name: Build macOS install ISO
 # 5. hdiutil convert <tmp>/<名称>.dmg -format UDTO -o <tmp>/<名称>
 # 6. mv <tmp>/<名称>.cdr <tmp>/<名称>.iso
 #
-# 唯一区别：CI 里无法登录 App Store 下载安装器，改用 MIST 从 Apple CDN 获取。
+# 唯一区别：CI 里无法登录 App Store 下载安装器，改用 Apple 官方命令行渠道获取：
+#   - softwareupdate --fetch-full-installer（优先）
+#   - 10.13–10.15 时可从 swcdn.apple.com 直链拼装（见 scripts/download-installer.sh）
+# 注意：macOS 15.6 起 Apple 修复 CVE-2025-43187 后 `installer -pkg` 不再能安装
+# 旧安装器（报 "Opened package is not the same at install time"），MIST 因此不可用。
 
 on:
   workflow_dispatch:
@@ -51,6 +55,9 @@ jobs:
       DMG_SIZE: ${{ inputs.dmg_size }}
 
     steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
       - name: 清理磁盘空间
         run: |
           set -euo pipefail
@@ -60,23 +67,30 @@ jobs:
           FREE=$(df -g /System/Volumes/Data | awk 'NR==2 {print $4}')
           echo "可用空间: ${FREE} GiB"
           df -h /System/Volumes/Data
-          if [ "${FREE}" -lt 28 ]; then
-            echo "::error::可用空间不足 28 GiB，无法制作 macOS 安装镜像"
+          if [ "${FREE}" -lt 22 ]; then
+            echo "::error::可用空间不足 22 GiB，无法制作 macOS 安装镜像"
             exit 1
           fi
 
       - name: 下载 macOS 安装器
         run: |
           set -euo pipefail
-          HOMEBREW_NO_AUTO_UPDATE=1 brew install mist-cli
-          sudo "$(command -v mist)" download installer "${VERSION}" application \
-            --output-directory "${RUNNER_TEMP}/installer" --no-ansi --force
-          ls -d "${RUNNER_TEMP}/installer/"*.app
+          echo '--- softwareupdate 可用安装器 ---'
+          softwareupdate --list-full-installers || true
+          echo '--- 开始获取安装器 ---'
+          bash scripts/download-installer.sh "${VERSION}" "${RUNNER_TEMP}/installer"
+          echo '--- 获取完成 ---'
+          echo "INSTALLER_APP=${INSTALLER_APP}"
+          df -h /System/Volumes/Data
 
       - name: 制作安装镜像（官方 createinstallmedia 流程）
         run: |
           set -euo pipefail
-          APP="$(ls -d "${RUNNER_TEMP}/installer/"*.app | head -n 1)"
+          APP="${INSTALLER_APP:-}"
+          if [ -z "${APP}" ] || [ ! -d "${APP}" ]; then
+            APP="$(find /Applications -maxdepth 1 -name 'Install macOS*.app' -print -quit)"
+          fi
+          [ -n "${APP}" ] && [ -d "${APP}" ] || { echo "::error::没有找到安装器"; exit 1; }
           WORK="${RUNNER_TEMP}/work"
           mkdir -p "${WORK}" dist
           echo "安装器: ${APP}"
@@ -90,6 +104,8 @@ jobs:
           sudo "${APP}/Contents/Resources/createinstallmedia" --volume "/Volumes/${NAME}" --nointeraction
           # 4. 卸载
           sudo hdiutil detach "${DEV}" -force
+          # 安装器已用完（约 8 GB），删除以腾出转换所需空间
+          sudo rm -rf "${APP}" 2>/dev/null || true
           # 5. 转换为 cdr
           hdiutil convert "${WORK}/${NAME}.dmg" -format UDTO -o "${WORK}/${NAME}"
           # 6. 改名成 iso
@@ -97,8 +113,9 @@ jobs:
 
           # GitHub Release 单文件上限 2 GiB，按 1900 MiB 分卷
           split -b 1900m "${WORK}/${NAME}.iso" "dist/${NAME}.iso.part-"
+          rm -f "${WORK}/${NAME}.iso"
           ( cd dist && shasum -a 256 "${NAME}".iso.part-* > SHA256SUMS.txt )
-          du -sh "${WORK}/${NAME}.iso" dist/*
+          du -sh dist/*
 
       - name: 发布 Release 并提供下载链接
         env:
@@ -106,17 +123,17 @@ jobs:
         run: |
           set -euo pipefail
           TAG="macos-${NAME}-${VERSION}"
-          cat > dist/README.txt <<EOF
-          macOS ${VERSION} (${NAME}) 安装镜像
-
-          拼接分卷（GitHub 单文件上限 2 GiB）:
-            macOS / Linux : cat ${NAME}.iso.part-* > ${NAME}.iso
-            Windows cmd   : copy /b ${NAME}.iso.part-* ${NAME}.iso
-          校验:
-            shasum -a 256 -c SHA256SUMS.txt
-
-          VMware: .vmx 文件中加入 smc.version = "0"
-          EOF
+          {
+            echo "macOS ${VERSION} (${NAME}) 安装镜像"
+            echo
+            echo "拼接分卷（GitHub 单文件上限 2 GiB）:"
+            echo "  macOS / Linux : cat ${NAME}.iso.part-* > ${NAME}.iso"
+            echo "  Windows cmd   : copy /b ${NAME}.iso.part-* ${NAME}.iso"
+            echo "校验:"
+            echo "  shasum -a 256 -c SHA256SUMS.txt"
+            echo
+            echo "VMware: .vmx 文件中加入 smc.version = \"0\""
+          } > dist/README.txt
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
             gh release delete "${TAG}" --yes --cleanup-tag
@@ -130,6 +147,8 @@ jobs:
           BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
           {
             echo "## macOS ${VERSION} (${NAME}) 镜像下载"
+            echo
+            echo "发布页: [${TAG}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG})"
             echo
             echo "| 文件 | 下载链接 |"
             echo "| --- | --- |"

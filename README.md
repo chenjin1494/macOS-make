@@ -15,8 +15,20 @@
 | `hdiutil convert /tmp/Catalina.dmg -format UDTO -o ~/Desktop/Catalina.cdr` | 5. 转换为 cdr |
 | `mv ~/Desktop/Catalina.cdr ~/Desktop/Catalina.iso` | 6. 改名成 iso |
 
-唯一区别：CI 无法登录 App Store 下载安装器，所以安装器改用
-[MIST](https://github.com/ninxsoft/mist-cli) 从 Apple 官方 CDN 下载。
+唯一区别：CI 无法登录 App Store 下载安装器，所以安装器改用 Apple 官方命令行渠道获取
+（`scripts/download-installer.sh`）：
+
+1. `sudo softwareupdate --fetch-full-installer --full-installer-version <版本>`（优先）
+2. 10.13–10.15 若运行器不提供该版本，则从 `swcdn.apple.com` 直链拼装
+   （BaseSystem.dmg + InstallESDDmg.pkg + InstallInfo.plist，参考
+   [mkmaciso](https://github.com/LongQT-sea/mkmaciso) 的做法）
+3. 仅在宿主 macOS < 15.6 时才尝试 [MIST](https://github.com/ninxsoft/mist-cli)
+
+> 注意：macOS 15.6 起 Apple 修复 CVE-2025-43187，`installer -pkg` 不再能安装旧安装器
+> （报 `Opened package is not the same at install time`），依赖它的 MIST 在 15.6+ 及
+> 其后的运行器上都会失败（[Mist#215](https://github.com/ninxsoft/mist-cli/issues/215)、
+> [Mist#198](https://github.com/ninxsoft/mist-cli/issues/198)）。因此这里绕开 `installer`。
+> 另外 Apple Silicon 上 Catalina 的 `createinstallmedia` 不可用，10.x 请用 Intel 运行器。
 
 ## 使用方法
 
@@ -49,6 +61,7 @@ copy /b Catalina.iso.part-* Catalina.iso
 
 ## 说明
 
-- 镜像约 8.4 GB，制作过程需要约 28 GiB 可用磁盘，工作流会先删掉 Xcode 和模拟器运行时腾空间
-- `macos-15-intel` / `macos-26-intel` 是 Intel 运行器，跑 `createinstallmedia` 兼容性最好
+- 镜像约 8.4 GB，制作过程需要约 22 GiB 可用磁盘，工作流会先删掉 Xcode 和模拟器运行时腾空间
+- 若运行器里 `softwareupdate --list-full-installers` 没有目标版本，脚本会自动走 swcdn 直链拼装
+- `macos-15-intel` / `macos-26-intel` 是 Intel 运行器，跑 `createinstallmedia` 兼容性最好；10.13–10.15 在 Apple Silicon 上会直接报错退出
 - 镜像版权归 Apple，仅供个人测试、学习使用
