@@ -1,0 +1,46 @@
+name: Test installer fetch
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '要测试的 macOS 版本'
+        required: true
+        default: '10.15.7'
+      fetch:
+        description: '真正下载安装器（约 8 GB）'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15-intel
+    timeout-minutes: 120
+    steps:
+      - name: 系统信息与可用安装器
+        run: |
+          sw_vers
+          uname -m
+          df -h /System/Volumes/Data
+          echo '--- softwareupdate --list-full-installers ---'
+          softwareupdate --list-full-installers || true
+
+      - name: 下载安装器
+        if: ${{ inputs.fetch }}
+        run: |
+          set -euo pipefail
+          echo '--- before ---'
+          df -h /System/Volumes/Data
+          time sudo softwareupdate --fetch-full-installer --full-installer-version "${{ inputs.version }}"
+          echo '--- after ---'
+          df -h /System/Volumes/Data
+          ls -ld /Applications/Install*.app || true
+          for app in /Applications/Install*.app; do
+            [ -d "$app" ] || continue
+            ver="$(defaults read "$app/Contents/Info.plist" CFBundleShortVersionString 2>/dev/null || echo unknown)"
+            echo "APP=$app VERSION=$ver"
+            ls -l "$app/Contents/Resources/createinstallmedia" || true
+          done
