@@ -61,7 +61,7 @@ copy /b Catalina.iso.part-* Catalina.iso
 
 ## 说明
 
-- 镜像约 8.4 GB，制作过程需要约 22 GiB 可用磁盘，工作流会先删掉 Xcode 和模拟器运行时腾空间
+- 镜像约 8.4 GB，制作过程需要约 25 GiB 可用磁盘（macOS 运行器的数据卷通常有 100 GiB 以上）
 - 若运行器里 `softwareupdate --list-full-installers` 没有目标版本，脚本会自动走 swcdn 直链拼装
 - `macos-15-intel` / `macos-26-intel` 是 Intel 运行器，跑 `createinstallmedia` 兼容性最好；10.13–10.15 在 Apple Silicon 上会直接报错退出
 - 镜像版权归 Apple，仅供个人测试、学习使用

@@ -58,23 +58,10 @@ jobs:
       - name: 检出仓库
         uses: actions/checkout@v4
 
-      - name: 清理磁盘空间
-        run: |
-          set -euo pipefail
-          sudo rm -rf /Applications/Xcode*.app
-          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/*
-          rm -rf ~/Library/Developer/CoreSimulator/Caches ~/Library/Developer/Xcode
-          FREE=$(df -g /System/Volumes/Data | awk 'NR==2 {print $4}')
-          echo "可用空间: ${FREE} GiB"
-          df -h /System/Volumes/Data
-          if [ "${FREE}" -lt 22 ]; then
-            echo "::error::可用空间不足 22 GiB，无法制作 macOS 安装镜像"
-            exit 1
-          fi
-
       - name: 下载 macOS 安装器
         run: |
           set -euo pipefail
+          df -h /System/Volumes/Data
           echo '--- softwareupdate 可用安装器 ---'
           softwareupdate --list-full-installers || true
           echo '--- 开始获取安装器 ---'
