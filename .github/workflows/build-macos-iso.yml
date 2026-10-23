@@ -102,10 +102,16 @@ jobs:
           # 6. 改名成 iso
           mv "${WORK}/${NAME}.cdr" "${WORK}/${NAME}.iso"
 
+          # 先记下拼接后整镜像的 SHA256（分卷上传后整镜像本地不保留）
+          ISO_SHA256="$(shasum -a 256 "${WORK}/${NAME}.iso" | awk '{print $1}')"
+          echo "ISO_SHA256=${ISO_SHA256}"
+          echo "ISO_SHA256=${ISO_SHA256}" >> "$GITHUB_ENV"
+
           # GitHub Release 单文件上限 2 GiB，按 1900 MiB 分卷
           split -b 1900m "${WORK}/${NAME}.iso" "dist/${NAME}.iso.part-"
           rm -f "${WORK}/${NAME}.iso"
-          ( cd dist && shasum -a 256 "${NAME}".iso.part-* > SHA256SUMS.txt )
+          # SHA256SUMS.txt：第一行是拼接后整镜像的哈希，其余是各分卷的哈希
+          ( cd dist && { printf '%s  %s\n' "${ISO_SHA256}" "${NAME}.iso"; shasum -a 256 "${NAME}".iso.part-*; } > SHA256SUMS.txt )
           du -sh dist/*
 
       - name: 发布 Release 并提供下载链接
@@ -147,4 +153,8 @@ jobs:
               b="$(basename "${f}")"
               echo "| ${b} | [${b}](${BASE}/${b}) |"
             done
+            if [ -n "${ISO_SHA256:-}" ]; then
+              echo
+              echo "拼接后整镜像 SHA256: \`${ISO_SHA256}\`"
+            fi
           } >> "${GITHUB_STEP_SUMMARY}"
