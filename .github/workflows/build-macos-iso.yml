@@ -65,9 +65,13 @@ jobs:
           echo '--- softwareupdate 可用安装器 ---'
           softwareupdate --list-full-installers || true
           echo '--- 开始获取安装器 ---'
-          bash scripts/download-installer.sh "${VERSION}" "${RUNNER_TEMP}/installer"
-          echo '--- 获取完成 ---'
+          LOG="${RUNNER_TEMP}/installer-download.log"
+          bash scripts/download-installer.sh "${VERSION}" "${RUNNER_TEMP}/installer" | tee "${LOG}"
+          # 脚本最后一行输出安装器路径（$GITHUB_ENV 只对后续步骤生效，这里再显式导出一次）
+          INSTALLER_APP="$(tail -n 1 "${LOG}")"
           echo "INSTALLER_APP=${INSTALLER_APP}"
+          echo "INSTALLER_APP=${INSTALLER_APP}" >> "$GITHUB_ENV"
+          echo '--- 获取完成 ---'
           df -h /System/Volumes/Data
 
       - name: 制作安装镜像（官方 createinstallmedia 流程）
