@@ -1,0 +1,140 @@
+name: Build macOS install ISO
+
+# 按博客「官方制作镜像」流程制作 macOS 安装镜像（.iso）并发布到 Release
+# https://blog.csdn.net/qq_40627654/article/details/105378155
+#
+# 1. hdiutil create -o <tmp>/<名称> -size <大小> -volname <名称> -layout SPUD -fs HFS+J
+# 2. hdiutil attach <tmp>/<名称>.dmg -noverify -mountpoint /Volumes/<名称>
+# 3. sudo <安装器>.app/Contents/Resources/createinstallmedia --volume /Volumes/<名称> --nointeraction
+# 4. hdiutil detach /dev/diskN
+# 5. hdiutil convert <tmp>/<名称>.dmg -format UDTO -o <tmp>/<名称>
+# 6. mv <tmp>/<名称>.cdr <tmp>/<名称>.iso
+#
+# 唯一区别：CI 里无法登录 App Store 下载安装器，改用 MIST 从 Apple CDN 获取。
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'macOS 版本，例如 10.15.7 / 11.7.10 / 13.7.6'
+        required: true
+        default: '10.15.7'
+      name:
+        description: '镜像文件名（不含扩展名），例如 Catalina'
+        required: true
+        default: 'Catalina'
+      dmg_size:
+        description: 'hdiutil -size 参数，Catalina 用 9000m'
+        required: true
+        default: '9000m'
+      runner:
+        description: '运行器（10.15 及更早必须用 Intel 运行器）'
+        type: choice
+        options:
+          - macos-15-intel
+          - macos-26-intel
+          - macos-15
+          - macos-26
+        default: macos-15-intel
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ inputs.name }} ${{ inputs.version }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 300
+    env:
+      VERSION: ${{ inputs.version }}
+      NAME: ${{ inputs.name }}
+      DMG_SIZE: ${{ inputs.dmg_size }}
+
+    steps:
+      - name: 清理磁盘空间
+        run: |
+          set -euo pipefail
+          sudo rm -rf /Applications/Xcode*.app
+          sudo rm -rf /Library/Developer/CoreSimulator/Profiles/Runtimes/*
+          rm -rf ~/Library/Developer/CoreSimulator/Caches ~/Library/Developer/Xcode
+          FREE=$(df -g /System/Volumes/Data | awk 'NR==2 {print $4}')
+          echo "可用空间: ${FREE} GiB"
+          df -h /System/Volumes/Data
+          if [ "${FREE}" -lt 28 ]; then
+            echo "::error::可用空间不足 28 GiB，无法制作 macOS 安装镜像"
+            exit 1
+          fi
+
+      - name: 下载 macOS 安装器
+        run: |
+          set -euo pipefail
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install mist-cli
+          sudo "$(command -v mist)" download installer "${VERSION}" application \
+            --output-directory "${RUNNER_TEMP}/installer" --no-ansi --force
+          ls -d "${RUNNER_TEMP}/installer/"*.app
+
+      - name: 制作安装镜像（官方 createinstallmedia 流程）
+        run: |
+          set -euo pipefail
+          APP="$(ls -d "${RUNNER_TEMP}/installer/"*.app | head -n 1)"
+          WORK="${RUNNER_TEMP}/work"
+          mkdir -p "${WORK}" dist
+          echo "安装器: ${APP}"
+
+          # 1. 创建一个 dmg
+          hdiutil create -o "${WORK}/${NAME}" -size "${DMG_SIZE}" -volname "${NAME}" -layout SPUD -fs HFS+J
+          # 2. 挂载
+          DEV="$(hdiutil attach "${WORK}/${NAME}.dmg" -noverify -mountpoint "/Volumes/${NAME}" | awk '/^\/dev\/disk/ {print $1; exit}')"
+          echo "已挂载 ${DEV} -> /Volumes/${NAME}"
+          # 3. 写入安装器
+          sudo "${APP}/Contents/Resources/createinstallmedia" --volume "/Volumes/${NAME}" --nointeraction
+          # 4. 卸载
+          sudo hdiutil detach "${DEV}" -force
+          # 5. 转换为 cdr
+          hdiutil convert "${WORK}/${NAME}.dmg" -format UDTO -o "${WORK}/${NAME}"
+          # 6. 改名成 iso
+          mv "${WORK}/${NAME}.cdr" "${WORK}/${NAME}.iso"
+
+          # GitHub Release 单文件上限 2 GiB，按 1900 MiB 分卷
+          split -b 1900m "${WORK}/${NAME}.iso" "dist/${NAME}.iso.part-"
+          ( cd dist && shasum -a 256 "${NAME}".iso.part-* > SHA256SUMS.txt )
+          du -sh "${WORK}/${NAME}.iso" dist/*
+
+      - name: 发布 Release 并提供下载链接
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="macos-${NAME}-${VERSION}"
+          cat > dist/README.txt <<EOF
+          macOS ${VERSION} (${NAME}) 安装镜像
+
+          拼接分卷（GitHub 单文件上限 2 GiB）:
+            macOS / Linux : cat ${NAME}.iso.part-* > ${NAME}.iso
+            Windows cmd   : copy /b ${NAME}.iso.part-* ${NAME}.iso
+          校验:
+            shasum -a 256 -c SHA256SUMS.txt
+
+          VMware: .vmx 文件中加入 smc.version = "0"
+          EOF
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release delete "${TAG}" --yes --cleanup-tag
+          fi
+          gh release create "${TAG}" \
+            dist/"${NAME}".iso.part-* dist/SHA256SUMS.txt dist/README.txt \
+            --title "macOS ${VERSION} (${NAME}) 安装镜像" \
+            --notes-file dist/README.txt \
+            --latest=false
+
+          BASE="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${TAG}"
+          {
+            echo "## macOS ${VERSION} (${NAME}) 镜像下载"
+            echo
+            echo "| 文件 | 下载链接 |"
+            echo "| --- | --- |"
+            for f in dist/"${NAME}".iso.part-* dist/SHA256SUMS.txt; do
+              b="$(basename "${f}")"
+              echo "| ${b} | [${b}](${BASE}/${b}) |"
+            done
+          } >> "${GITHUB_STEP_SUMMARY}"

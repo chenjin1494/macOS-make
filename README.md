@@ -1,0 +1,54 @@
+# macOS-make
+
+用 GitHub Actions 在 macOS 运行器上，按官方 `createinstallmedia` 流程制作 macOS 安装镜像（`.iso`），
+自动发布到 GitHub Release 提供下载链接。
+
+流程完全对应博客 [《制作 macOS Catalina 正式版安装镜像 .cdr 或 .iso 文件》](https://blog.csdn.net/qq_40627654/article/details/105378155)
+的「官方制作镜像」部分：
+
+| 博客命令 | 工作流中的步骤 |
+| --- | --- |
+| `hdiutil create -o /tmp/Catalina -size 8500m -volname Catalina -layout SPUD -fs HFS+J` | 1. 创建一个 dmg |
+| `hdiutil attach /tmp/Catalina.dmg -noverify -mountpoint /Volumes/Catalina` | 2. 挂载 |
+| `sudo .../createinstallmedia --volume /Volumes/Catalina --nointeraction` | 3. 写入安装器 |
+| `hdiutil detach /volumes/Install macOS Catalina` | 4. 卸载 |
+| `hdiutil convert /tmp/Catalina.dmg -format UDTO -o ~/Desktop/Catalina.cdr` | 5. 转换为 cdr |
+| `mv ~/Desktop/Catalina.cdr ~/Desktop/Catalina.iso` | 6. 改名成 iso |
+
+唯一区别：CI 无法登录 App Store 下载安装器，所以安装器改用
+[MIST](https://github.com/ninxsoft/mist-cli) 从 Apple 官方 CDN 下载。
+
+## 使用方法
+
+1. 打开仓库的 **Actions → Build macOS install ISO → Run workflow**
+2. 填写参数（默认即按博客制作 Catalina 10.15.7）：
+   - `version`：macOS 版本，如 `10.15.7`、`11.7.10`、`13.7.6`
+   - `name`：镜像文件名，如 `Catalina`
+   - `dmg_size`：`hdiutil -size` 参数，Catalina 用 `9000m`
+   - `runner`：运行器，10.15 及更早必须用 Intel 运行器（默认 `macos-15-intel`）
+3. 完成后到 **Releases** 下载，固定地址：
+
+   https://github.com/chenjin1494/macOS-make/releases/tag/macos-Catalina-10.15.7
+
+## 下载后怎么用
+
+GitHub 单个发布文件上限 2 GiB，镜像被切成约 1.9 GiB 的分卷，先拼接再校验：
+
+```bash
+# macOS / Linux
+cat Catalina.iso.part-* > Catalina.iso
+shasum -a 256 -c SHA256SUMS.txt
+```
+
+```bat
+:: Windows
+copy /b Catalina.iso.part-* Catalina.iso
+```
+
+在 VMware 中安装：`.vmx` 文件里加入 `smc.version = "0"`（Catalina 实际约是 10.15.1，建议 VMware 15.5.1）。
+
+## 说明
+
+- 镜像约 8.4 GB，制作过程需要约 28 GiB 可用磁盘，工作流会先删掉 Xcode 和模拟器运行时腾空间
+- `macos-15-intel` / `macos-26-intel` 是 Intel 运行器，跑 `createinstallmedia` 兼容性最好
+- 镜像版权归 Apple，仅供个人测试、学习使用
