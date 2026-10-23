@@ -21,7 +21,7 @@
 #   scripts/download-installer.sh <version> <work_dir>
 # 成功时:
 #   - 最后一行输出安装器 .app 的绝对路径
-#   - 若存在 $GITHUB_ENV，则写入 INSTALLER_APP=<path>
+#   - 若存在 ${GITHUB_ENV}，则写入 INSTALLER_APP=<path>
 # =============================================================================
 set -euo pipefail
 
@@ -89,7 +89,7 @@ finish() {
     [ -d "$app" ] || die "安装器目录不存在: $app"
     [ -x "$app/Contents/Resources/createinstallmedia" ] \
         || die "安装器缺少 createinstallmedia: $app"
-    log "安装器就绪: $app（版本 $(app_version "$app")）"
+    log "安装器就绪: ${app}（版本 $(app_version "$app")）"
     if [ -n "${GITHUB_ENV:-}" ]; then
         printf 'INSTALLER_APP=%s\n' "$app" >> "$GITHUB_ENV"
     fi
@@ -100,7 +100,7 @@ finish() {
 # 1) softwareupdate：Apple 官方下载渠道
 # -----------------------------------------------------------------------------
 try_softwareupdate() {
-    log "尝试 softwareupdate 下载 macOS $VERSION（Apple 官方渠道）"
+    log "尝试 softwareupdate 下载 macOS ${VERSION}（Apple 官方渠道）"
     local app attempt rc hint before
     hint="$(marketing_name "$VERSION")"
     before="$WORK_DIR/apps-before.txt"
@@ -125,7 +125,7 @@ try_softwareupdate() {
             warn "softwareupdate 返回成功，但 /Applications 下没找到 $VERSION 安装器"
         else
             rc=$?
-            warn "softwareupdate 失败（退出码 $rc）"
+            warn "softwareupdate 失败（退出码 ${rc}）"
         fi
         sleep 10
     done
