@@ -57,6 +57,10 @@ shasum -a 256 -c SHA256SUMS.txt
 copy /b Catalina.iso.part-* Catalina.iso
 ```
 
+`SHA256SUMS.txt` 第一行是拼接后整镜像 `Catalina.iso` 的哈希，其余为各分卷的哈希，
+所以拼接完直接 `shasum -a 256 -c SHA256SUMS.txt` 就能同时校验整镜像和分卷。
+每次重新构建的镜像带不同的卷内时间戳，哈希会变，请以最新 Release 里的 `SHA256SUMS.txt` 为准。
+
 在 VMware 中安装：`.vmx` 文件里加入 `smc.version = "0"`（Catalina 实际约是 10.15.1，建议 VMware 15.5.1）。
 
 ## 说明
